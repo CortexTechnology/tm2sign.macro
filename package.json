@@ -1,0 +1,25 @@
+{
+  "name": "tm2sign.macro",
+  "version": "1.0.0",
+  "main": "lib/macro.js",
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "test": "jest 'tests'",
+    "build": "node_modules/@babel/cli/bin/babel.js src -d lib"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/cli": "^7.2.3",
+    "babel-core": "^6.26.3",
+    "babel-jest": "^24.1.0",
+    "babel-plugin-macros": "^2.5.0",
+    "babel-plugin-tester": "^6.0.0",
+    "jest": "^24.1.0"
+  },
+  "dependencies": {
+    "@babel/core": "^7.3.4",
+    "@babel/preset-env": "^7.3.4"
+  }
+}
