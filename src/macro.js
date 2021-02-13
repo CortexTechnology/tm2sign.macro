@@ -9,14 +9,16 @@ const macro = ({references, config}) => {
 
     const privateKey = `-----BEGIN RSA PRIVATE KEY-----\n${privateKeyProperty}\n-----END RSA PRIVATE KEY-----`;
 
-    console.log("privateKey", privateKey);
 
     defaultImport.forEach(referencePath => {
         if (referencePath.parentPath.type === "CallExpression") {
             const callExpressionPath = referencePath.parentPath;
             const [operationArg, fieldsArg] = callExpressionPath.get("arguments");
-            const operation = operationArg.evaluate().value;
-            const fields = fieldsArg.evaluate().value;
+
+            const {value: operation, success: getOperationSuccess} = getArgumentValue(operationArg);
+            const {value: fields, success: getFieldsSuccess} = getArgumentValue(fieldsArg);
+            if (!getOperationSuccess || !getFieldsSuccess)
+                throw new MacroError("Error: Unable to get macro arguments values")
 
             const signed = sign(privateKey, operation, fields);
             referencePath.parentPath.replaceWithSourceString(JSON.stringify(signed));
@@ -24,6 +26,81 @@ const macro = ({references, config}) => {
     })
 
 }
+
+const getArgumentValue = (argument) => {
+    if (argument.evaluateTruthy()) {
+        return {success: true, value: argument.evaluate().value};
+    }
+
+    if (argument.isArrayExpression()) {
+        return getArrayValue(argument);
+    } else if (argument.isSpreadElement()) {
+        return getSpreadValue(argument);
+    } else if (argument.isObjectExpression()) {
+        return getObjectValue(argument);
+    } else if (argument.isNumericLiteral()) {
+        return {success: true, value: argument.node.value};
+    }
+
+    console.log(":(", argument.type);
+    return {success: false};
+};
+
+const getArrayValue = (arrayExpression) => {
+    const result = [];
+
+    for (const arrayElement of arrayExpression.get("elements")) {
+        const elementValue = getArgumentValue(arrayElement);
+        if (elementValue.success) {
+            if (elementValue.isSpread) {
+                result.push(...elementValue.value);
+            } else {
+                result.push(elementValue.value);
+            }
+        } else {
+            return {success: false};
+        }
+    }
+    return {success: true, value: result};
+};
+
+const getSpreadValue = (spreadElement) => {
+    const argument = spreadElement.get("argument");
+    const spreadValue = getArgumentValue(argument);
+    return {isSpread: true, ...spreadValue};
+};
+
+const getObjectValue = (objectElement) => {
+    let result = {};
+    for (const objectProperty of objectElement.get("properties")) {
+        const key = objectProperty.get("key");
+        if (objectProperty.node.computed) {
+            console.log("Computed keys are not supported");
+            return {success: false};
+        }
+
+        const valuePath = objectProperty.get("value");
+        if (valuePath.parentPath.isSpreadElement()) {
+            const value = getArgumentValue(valuePath.parentPath);
+            if (!value.success) return {success: false};
+
+            result = {...result, ...value.value};
+        } else {
+            if (!key.isIdentifier()) {
+                console.log("Unable to get object key");
+                return {success: false};
+            }
+
+            const value = getArgumentValue(valuePath);
+            if (!value.success) return {success: false};
+
+            result = {...result, [key.node.name]: value.value};
+        }
+    }
+
+    return {success: true, value: result};
+};
+
 
 const sign = (privateKey, operation, fields) => {
     const dataToSign = JSON.stringify({[operation]: fields});
