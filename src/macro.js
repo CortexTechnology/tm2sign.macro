@@ -38,8 +38,14 @@ const getArgumentValue = (argument) => {
         return getSpreadValue(argument);
     } else if (argument.isObjectExpression()) {
         return getObjectValue(argument);
-    } else if (argument.isNumericLiteral()) {
+    } else if (argument.isStringLiteral() || argument.isNumericLiteral() || argument.isBooleanLiteral()) {
         return {success: true, value: argument.node.value};
+    } else if (argument.isReferencedIdentifier()) {
+        const resolved = argument.resolve();
+        if (resolved === argument) {
+            return {success: false};
+        }
+        return getArgumentValue(resolved);
     }
 
     console.log(":(", argument.type);
