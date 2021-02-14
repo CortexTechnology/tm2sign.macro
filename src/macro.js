@@ -57,7 +57,7 @@ const getArgumentValue = (argument, currentDirectory) => {
         return getArgumentValue(resolved, currentDirectory);
     }
 
-    console.log(":(", argument.type);
+    console.log(":(", argument.type, currentDirectory);
     return {success: false};
 };
 
