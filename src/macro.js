@@ -1,7 +1,11 @@
 import {createMacro, MacroError} from 'babel-plugin-macros'
 import crypto from 'crypto';
+import fs from "fs";
+import * as path from "path";
+import {parse} from "@babel/core";
+import traverse from '@babel/traverse';
 
-const macro = ({references, config}) => {
+const macro = ({references, state, config}) => {
     const {default: defaultImport = []} = references;
     const {privateKey: privateKeyProperty} = config;
     if (!privateKeyProperty)
@@ -9,14 +13,16 @@ const macro = ({references, config}) => {
 
     const privateKey = `-----BEGIN RSA PRIVATE KEY-----\n${privateKeyProperty}\n-----END RSA PRIVATE KEY-----`;
 
+    const currentDirectory = path.dirname(state.file.opts.filename);
 
     defaultImport.forEach(referencePath => {
         if (referencePath.parentPath.type === "CallExpression") {
             const callExpressionPath = referencePath.parentPath;
             const [operationArg, fieldsArg] = callExpressionPath.get("arguments");
 
-            const {value: operation, success: getOperationSuccess} = getArgumentValue(operationArg);
-            const {value: fields, success: getFieldsSuccess} = getArgumentValue(fieldsArg);
+            const {value: operation, success: getOperationSuccess} = getArgumentValue(operationArg, currentDirectory);
+            const {value: fields, success: getFieldsSuccess} = getArgumentValue(fieldsArg, currentDirectory);
+
             if (!getOperationSuccess || !getFieldsSuccess)
                 throw new MacroError("Error: Unable to get macro arguments values")
 
@@ -27,36 +33,70 @@ const macro = ({references, config}) => {
 
 }
 
-const getArgumentValue = (argument) => {
+const getArgumentValue = (argument, currentDirectory) => {
     if (argument.evaluateTruthy()) {
         return {success: true, value: argument.evaluate().value};
     }
 
     if (argument.isArrayExpression()) {
-        return getArrayValue(argument);
+        return getArrayValue(argument, currentDirectory);
     } else if (argument.isSpreadElement()) {
-        return getSpreadValue(argument);
+        return getSpreadValue(argument, currentDirectory);
     } else if (argument.isObjectExpression()) {
-        return getObjectValue(argument);
+        return getObjectValue(argument, currentDirectory);
     } else if (argument.isStringLiteral() || argument.isNumericLiteral() || argument.isBooleanLiteral()) {
         return {success: true, value: argument.node.value};
     } else if (argument.isReferencedIdentifier()) {
         const resolved = argument.resolve();
         if (resolved === argument) {
-            return {success: false};
+            const binding = argument.scope.getBinding(argument.node.name)
+            if (binding && binding.kind === 'module' && binding.path.parentPath.isImportDeclaration()) {
+                return processImportBinding(binding, currentDirectory);
+            }
         }
-        return getArgumentValue(resolved);
+        return getArgumentValue(resolved, currentDirectory);
     }
 
     console.log(":(", argument.type);
     return {success: false};
 };
 
-const getArrayValue = (arrayExpression) => {
+const processImportBinding = (binding, currentDirectory) => {
+    const bindingPath = binding.path.parentPath
+    const sourcePath = currentDirectory + "/" + bindingPath.node.source.value
+    const p = fs.existsSync(sourcePath + '.js') ? sourcePath + '.js' : sourcePath + '.tsx'
+    const code = fs.readFileSync(p, 'utf8')
+
+    const variableName = binding.identifier.name;
+    const variablePath = getPath(code, variableName);
+    if (variablePath) {
+        return getArgumentValue(variablePath, path.dirname(p));
+    }
+
+    console.log(`${variableName} not found in ${sourcePath}`)
+    return {success: false}
+}
+
+function getPath(code, name) {
+    const ast = parse(code);
+    let path;
+    traverse(ast, {
+        VariableDeclaration: function (_path) {
+            const init = _path.get("declarations").find(d => d.node.id.name === name);
+            if (init) {
+                path = init.get("init");
+                _path.stop();
+            }
+        },
+    });
+    return path;
+}
+
+const getArrayValue = (arrayExpression, state) => {
     const result = [];
 
     for (const arrayElement of arrayExpression.get("elements")) {
-        const elementValue = getArgumentValue(arrayElement);
+        const elementValue = getArgumentValue(arrayElement, state);
         if (elementValue.success) {
             if (elementValue.isSpread) {
                 result.push(...elementValue.value);
@@ -70,13 +110,13 @@ const getArrayValue = (arrayExpression) => {
     return {success: true, value: result};
 };
 
-const getSpreadValue = (spreadElement) => {
+const getSpreadValue = (spreadElement, state) => {
     const argument = spreadElement.get("argument");
-    const spreadValue = getArgumentValue(argument);
+    const spreadValue = getArgumentValue(argument, state);
     return {isSpread: true, ...spreadValue};
 };
 
-const getObjectValue = (objectElement) => {
+const getObjectValue = (objectElement, state) => {
     let result = {};
     for (const objectProperty of objectElement.get("properties")) {
         const key = objectProperty.get("key");
@@ -87,7 +127,7 @@ const getObjectValue = (objectElement) => {
 
         const valuePath = objectProperty.get("value");
         if (valuePath.parentPath.isSpreadElement()) {
-            const value = getArgumentValue(valuePath.parentPath);
+            const value = getArgumentValue(valuePath.parentPath, state);
             if (!value.success) return {success: false};
 
             result = {...result, ...value.value};
@@ -97,7 +137,7 @@ const getObjectValue = (objectElement) => {
                 return {success: false};
             }
 
-            const value = getArgumentValue(valuePath);
+            const value = getArgumentValue(valuePath, state);
             if (!value.success) return {success: false};
 
             result = {...result, [key.node.name]: value.value};
