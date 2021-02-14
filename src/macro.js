@@ -63,8 +63,15 @@ const getArgumentValue = (argument, currentDirectory) => {
 
 const processImportBinding = (binding, currentDirectory) => {
     const bindingPath = binding.path.parentPath
-    const sourcePath = currentDirectory + "/" + bindingPath.node.source.value
-    const p = fs.existsSync(sourcePath + '.js') ? sourcePath + '.js' : sourcePath + '.tsx'
+    const fileName = bindingPath.node.source.value;
+    const sourcePath = fileName.startsWith(".") ? `${currentDirectory}/${fileName}` : `${process.cwd()}/src/${fileName}`;
+
+    const p = fs.existsSync(sourcePath + '.js') ? sourcePath + '.js' : fs.existsSync(sourcePath + '.tsx') ? sourcePath + '.tsx' : false;
+    if (!p) {
+        console.log(`${sourcePath} not found`);
+        return {success: false};
+    }
+
     const code = fs.readFileSync(p, 'utf8')
 
     const variableName = binding.identifier.name;
